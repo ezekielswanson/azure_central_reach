@@ -1,0 +1,4 @@
+export const CENTRAL_REACH_EMPLOYEE_TYPES = {
+  BT_RBT: "BT_RBT",
+  BCBA: "BCBA"
+};

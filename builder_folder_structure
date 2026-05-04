@@ -1,0 +1,301 @@
+You are helping me build the Azure version of my existing AWS HubSpot ↔ CentralReach integration.
+
+Goal:
+Create the Azure Functions project file structure first. Do not implement the full sync logic yet. We are building sequentially:
+1. Intake poller logic
+2. Client sync logic
+3. Employee sync logic for BT/RBT and BCBA
+
+Reference repo:
+Use the local AWS repo as a read-only reference if available at ../aws_code.
+Do not modify ../aws_code.
+Only create or edit files inside the current Azure repo: azure_centra_reach.
+
+Important safety rules:
+- Do not read, print, create, or hardcode real secrets.
+- Do not add secret values to files.
+- Do not include PHI, sample patient data, real emails, real phone numbers, real names, or real tokens.
+- Do not commit local.settings.json.
+- Do not change Azure resources from the CLI.
+- Only create project files and safe placeholder/stub code.
+- Use TODO comments where business logic will be added later.
+
+Azure target architecture:
+- Azure Functions Node.js project
+- Timer-triggered intake poller
+- HTTP connectivity test function
+- Cosmos DB state store replacing DynamoDB
+- Service Bus queue helpers replacing future queue/DLQ behavior
+- process.env for environment variables
+- Application Insights via console logs
+
+Existing Azure env vars expected:
+- CR_CLIENT_ID
+- CR_CLIENT_SECRET
+- CR_API_KEY
+- HUBSPOT_PRIVATE_APP_TOKEN
+- CR_BASE_URL
+- CR_TOKEN_URL
+- HUBSPOT_BASE_URL
+- HS_DEAL_PIPELINE_ID
+- HS_STAGE_ALLOWLIST_JSON
+- HUBSPOT_CR_CONTACT_ID_PROPERTY
+- MAX_DEALS_PER_RUN
+- MAX_BT_RBT_PER_RUN
+- MAX_BCBA_PER_RUN
+- DEDUPE_TTL_SECONDS
+- LEASE_TTL_SECONDS
+- SUCCESS_TTL_SECONDS
+- FAIL_TTL_SECONDS
+- STATE_PROVIDER
+- COSMOS_ENDPOINT
+- COSMOS_KEY
+- COSMOS_DATABASE_ID
+- COSMOS_CONTAINER_ID
+- STATE_TTL_ATTR
+- SERVICE_BUS_CONNECTION_STRING
+- CLIENT_SYNC_QUEUE_NAME
+- EMPLOYEE_SYNC_QUEUE_NAME
+
+Create this file structure:
+
+azure_centra_reach/
+  .gitignore
+  README.md
+  host.json
+  package.json
+  local.settings.example.json
+
+  src/
+    functions/
+      connectivityTest.mjs
+      intakePoller.mjs
+      clientSyncHttpTest.mjs
+      processClientQueue.mjs
+      processEmployeeQueue.mjs
+
+    lib/
+      config.mjs
+      safeLog.mjs
+      errors.mjs
+      retry.mjs
+      hubspotClient.mjs
+      centralReachClient.mjs
+      cosmosState.mjs
+      serviceBusClient.mjs
+      hash.mjs
+      dates.mjs
+      validation.mjs
+
+    workflows/
+      intakePollerWorkflow.mjs
+      clientSyncWorkflow.mjs
+      employeeSyncWorkflow.mjs
+
+    mappings/
+      client/
+        buildClientPayload.mjs
+        buildClientMetadata.mjs
+        validateClientPayload.mjs
+
+      employees/
+        buildEmployeePayload.mjs
+        validateEmployeePayload.mjs
+
+    constants/
+      hubspot.mjs
+      centralReach.mjs
+      state.mjs
+      queues.mjs
+
+    tests/
+      smoke/
+        configSmoke.test.mjs
+        connectivitySmoke.test.mjs
+
+Requirements for created files:
+
+1. package.json
+Create a Node.js Azure Functions-compatible package.json using ES modules.
+Include:
+- "type": "module"
+- start script for func start
+- test placeholder script
+- dependencies for:
+  - @azure/functions
+  - @azure/cosmos
+  - @azure/service-bus
+  - axios
+
+2. host.json
+Create a standard Azure Functions host.json suitable for Node functions.
+
+3. .gitignore
+Include:
+- node_modules
+- local.settings.json
+- .env
+- .DS_Store
+- coverage
+- dist
+- Azure Functions local output files if relevant
+
+4. local.settings.example.json
+Create an example only with placeholder values.
+Do not include real secrets.
+Include the env var names listed above with "CHANGE_ME" or safe placeholder values.
+
+5. src/lib/config.mjs
+Create a config loader that reads process.env.
+It should validate required env vars by name.
+It should never log actual secret values.
+It should export:
+- getConfig()
+- validateConfig()
+- getRequiredEnv(name)
+- getOptionalEnv(name, defaultValue)
+
+6. src/lib/safeLog.mjs
+Create PHI-safe logging helpers.
+Include:
+- safeLog(level, message, meta)
+- redactPotentialPhi(value)
+- safeString(value, max)
+- Do not log full payloads.
+- Redact emails and US phone-like strings.
+
+7. src/lib/errors.mjs
+Create helper functions for safe error metadata:
+- toErrorMeta(error)
+- buildErrorLog({ workflow, stage, error, recordId, extra })
+
+8. src/lib/retry.mjs
+Create a generic retry helper with exponential backoff.
+Retry only 429 and 5xx HTTP errors.
+Export:
+- withRetry(fn, options)
+- isRetriableStatus(status)
+
+9. src/lib/hubspotClient.mjs
+Create a skeleton HubSpot API client using axios.
+Do not implement every endpoint yet.
+Export placeholder functions:
+- createHubSpotClient(config)
+- searchIntakeCompleteDeals({ limit })
+- getDealById(dealId)
+- updateDealProperties(dealId, properties)
+
+The functions can throw "Not implemented yet" except createHubSpotClient can return a configured axios instance.
+
+10. src/lib/centralReachClient.mjs
+Create a skeleton CentralReach API client using axios.
+Export placeholder functions:
+- createCentralReachClient(config)
+- getCentralReachAccessToken()
+- createOrUpdateClient(payload)
+- updateClientMetadata(contactId, metadataValues)
+- createOrUpdateEmployee(payload)
+
+The token function can be partially stubbed but must not print credentials.
+
+11. src/lib/cosmosState.mjs
+Create a Cosmos DB state helper skeleton.
+Use @azure/cosmos.
+Export:
+- createStateClient(config)
+- acquireLease({ pk, id, ttlSeconds })
+- releaseLease({ pk, id })
+- hasState({ pk, id })
+- putState({ pk, id, type, ttlSeconds, data })
+- getState({ pk, id })
+
+Use Cosmos item-level TTL with property name "ttl".
+Do not use DynamoDB expiresAt logic.
+
+12. src/lib/serviceBusClient.mjs
+Create a Service Bus helper skeleton.
+Use @azure/service-bus.
+Export:
+- createServiceBusClient(config)
+- sendClientSyncMessage(message)
+- sendEmployeeSyncMessage(message)
+
+Messages should be lightweight only: IDs and workflow metadata. Do not include PHI payloads.
+
+13. src/workflows/intakePollerWorkflow.mjs
+Create the intake poller workflow skeleton.
+This is phase 1.
+Export:
+- runIntakePollerWorkflow(context)
+
+Pseudo-flow only:
+- load config
+- acquire poller lease
+- search HubSpot Intake Complete deals
+- dedupe each deal using Cosmos state
+- enqueue eligible client sync messages to Service Bus
+- release lease
+- return safe summary counts
+
+Do not implement real mapping or full API logic yet.
+
+14. src/workflows/clientSyncWorkflow.mjs
+Create placeholder for phase 2.
+Export:
+- runClientSyncWorkflow({ dealId, context })
+
+For now it should throw "Client sync workflow not implemented yet".
+
+15. src/workflows/employeeSyncWorkflow.mjs
+Create placeholder for phase 3.
+Export:
+- runEmployeeSyncWorkflow({ recordId, employeeType, context })
+
+For now it should throw "Employee sync workflow not implemented yet".
+
+16. src/functions/connectivityTest.mjs
+Create an HTTP-triggered Azure Function for safe connectivity testing.
+It should:
+- load config
+- check env var presence only
+- optionally instantiate clients
+- return safe booleans/status only
+- never return actual secrets
+- never return PHI
+
+17. src/functions/intakePoller.mjs
+Create a timer-triggered Azure Function.
+Schedule should be every 5 minutes:
+0 */5 * * * *
+It should call runIntakePollerWorkflow(context).
+
+18. src/functions/clientSyncHttpTest.mjs
+Create a temporary HTTP test function that accepts a dealId query/body value and calls client workflow later.
+For now it should validate dealId presence and return "not implemented".
+
+19. src/functions/processClientQueue.mjs
+Create a Service Bus queue-triggered function for CLIENT_SYNC_QUEUE_NAME.
+For now it should parse the message and call runClientSyncWorkflow later.
+
+20. src/functions/processEmployeeQueue.mjs
+Create a Service Bus queue-triggered function for EMPLOYEE_SYNC_QUEUE_NAME.
+For now it should parse the message and call runEmployeeSyncWorkflow later.
+
+21. README.md
+Write setup notes:
+- this repo is Azure version
+- AWS repo remains reference only
+- how to install deps
+- how to run locally
+- how to deploy later with func azure functionapp publish
+- env vars are in Azure Function App settings
+- local.settings.json should not be committed
+- build order: intake poller first, client sync second, employee sync third
+
+Do not deploy anything yet.
+Do not run npm install unless I explicitly ask.
+Do not run Azure CLI commands unless I explicitly ask.
+After creating files, give me:
+- file tree summary
+- notes on anything assumed
+- exact next recommended step
