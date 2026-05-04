@@ -16,6 +16,18 @@ The AWS repository remains read-only reference material and should not be modifi
 - Start Azure Functions locally:
   - `npm run start`
 
+## Local Development Notes
+
+- `local.settings.json` is local-only and must never be committed.
+- Azure Function App settings configured in the Azure Portal do not automatically sync to your local `local.settings.json`.
+- For an initial local HTTP-only test, keep these settings enabled in `local.settings.json`:
+  - `AzureWebJobs.intakePoller.Disabled=true`
+  - `AzureWebJobs.processClientQueue.Disabled=true`
+  - `AzureWebJobs.processEmployeeQueue.Disabled=true`
+- This allows local testing of HTTP functions such as `connectivityTest` before setting up local Storage/Azurite and Service Bus connectivity.
+- To run timer triggers locally later, configure `AzureWebJobsStorage` with Azurite or a real Azure Storage connection string.
+- To run Service Bus queue triggers locally later, add `SERVICE_BUS_CONNECTION_STRING` manually in `local.settings.json` and never commit it to Git.
+
 ## Deploy Later
 
 When ready for deployment, publish with:
