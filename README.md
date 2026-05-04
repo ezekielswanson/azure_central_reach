@@ -25,6 +25,9 @@ The AWS repository remains read-only reference material and should not be modifi
   - `AzureWebJobs.processClientQueue.Disabled=true`
   - `AzureWebJobs.processEmployeeQueue.Disabled=true`
 - This allows local testing of HTTP functions such as `connectivityTest` before setting up local Storage/Azurite and Service Bus connectivity.
+- If `local.settings.json` still contains `CHANGE_ME` placeholders, `/api/connectivity-test` should return `ok=false` with `placeholderNames` listed.
+- That is expected until real local values are added.
+- The endpoint should still return a JSON body and not an empty `500` response.
 - To run timer triggers locally later, configure `AzureWebJobsStorage` with Azurite or a real Azure Storage connection string.
 - To run Service Bus queue triggers locally later, add `SERVICE_BUS_CONNECTION_STRING` manually in `local.settings.json` and never commit it to Git.
 

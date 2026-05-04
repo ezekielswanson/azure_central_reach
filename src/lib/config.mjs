@@ -43,24 +43,60 @@ export function getOptionalEnv(name, defaultValue = "") {
   return value.trim();
 }
 
+function isPlaceholderValue(value) {
+  if (!value) {
+    return false;
+  }
+
+  const trimmed = value.trim();
+  if (trimmed === "") {
+    return false;
+  }
+
+  return (
+    trimmed === "CHANGE_ME" ||
+    trimmed.includes("CHANGE_ME") ||
+    trimmed === "change_me_property_name" ||
+    trimmed === "[\"CHANGE_ME\"]"
+  );
+}
+
 export function validateConfig() {
-  const missing = REQUIRED_ENV_NAMES.filter((name) => {
+  const missing = [];
+  const placeholders = [];
+
+  REQUIRED_ENV_NAMES.forEach((name) => {
     const value = process.env[name];
-    return !value || value.trim() === "";
+    if (!value || value.trim() === "") {
+      missing.push(name);
+      return;
+    }
+
+    if (isPlaceholderValue(value)) {
+      placeholders.push(name);
+    }
   });
 
   return {
-    isValid: missing.length === 0,
-    missing
+    isValid: missing.length === 0 && placeholders.length === 0,
+    missing,
+    placeholders
   };
 }
 
 export function getConfig() {
   const validation = validateConfig();
   if (!validation.isValid) {
-    throw new Error(
-      `Configuration validation failed. Missing variables: ${validation.missing.join(", ")}`
-    );
+    const missingMessage =
+      validation.missing.length > 0
+        ? `Missing variables: ${validation.missing.join(", ")}`
+        : "";
+    const placeholderMessage =
+      validation.placeholders.length > 0
+        ? `Placeholder variables: ${validation.placeholders.join(", ")}`
+        : "";
+    const details = [missingMessage, placeholderMessage].filter(Boolean).join(". ");
+    throw new Error(`Configuration validation failed. ${details}`);
   }
 
   return {

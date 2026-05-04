@@ -9,40 +9,81 @@ export async function connectivityTest(request, context) {
   void request;
   void context;
 
-  const validation = validateConfig();
-  const response = {
-    ok: validation.isValid,
-    env: {
-      isValid: validation.isValid,
-      missingCount: validation.missing.length,
-      missingNames: validation.missing
-    },
-    clients: {
-      hubspot: false,
-      centralReach: false,
-      cosmos: false,
-      serviceBus: false
-    }
-  };
+  try {
+    const validation = validateConfig();
+    const response = {
+      ok: validation.isValid,
+      env: {
+        isValid: validation.isValid,
+        missingCount: validation.missing.length,
+        placeholderCount: validation.placeholders.length,
+        missingNames: validation.missing,
+        placeholderNames: validation.placeholders
+      },
+      clients: {
+        hubspot: false,
+        centralReach: false,
+        cosmos: false,
+        serviceBus: false
+      }
+    };
 
-  if (validation.isValid) {
+    if (!validation.isValid || validation.placeholders.length > 0) {
+      return {
+        status: 200,
+        jsonBody: response
+      };
+    }
+
     const config = getConfig();
-    createHubSpotClient(config);
-    createCentralReachClient(config);
-    createStateClient(config);
-    createServiceBusClient(config);
-    response.clients = {
-      hubspot: true,
-      centralReach: true,
-      cosmos: true,
-      serviceBus: true
+
+    try {
+      createHubSpotClient(config);
+      response.clients.hubspot = true;
+    } catch {
+      response.ok = false;
+    }
+
+    try {
+      createCentralReachClient(config);
+      response.clients.centralReach = true;
+    } catch {
+      response.ok = false;
+    }
+
+    try {
+      createStateClient(config);
+      response.clients.cosmos = true;
+    } catch {
+      response.ok = false;
+    }
+
+    try {
+      createServiceBusClient(config);
+      response.clients.serviceBus = true;
+    } catch {
+      response.ok = false;
+    }
+
+    return {
+      status: 200,
+      jsonBody: response
+    };
+  } catch (error) {
+    const errorName =
+      error && typeof error === "object" && typeof error.name === "string" ? error.name : "Error";
+
+    return {
+      status: 500,
+      jsonBody: {
+        ok: false,
+        error: {
+          message: "Connectivity test failed",
+          errorName
+        }
+      }
     };
   }
-
-  return {
-    status: response.ok ? 200 : 500,
-    jsonBody: response
-  };
 }
 
 app.http("connectivityTest", {
