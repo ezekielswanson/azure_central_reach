@@ -27,7 +27,7 @@
     "COSMOS_CONTAINER_ID": "CHANGE_ME",
     "STATE_TTL_ATTR": "ttl",
     "SERVICE_BUS_CONNECTION_STRING": "CHANGE_ME",
-    "CLIENT_SYNC_QUEUE_NAME": "client-sync",
-    "EMPLOYEE_SYNC_QUEUE_NAME": "employee-sync"
+    "CLIENT_SYNC_QUEUE_NAME": "client-sync-queue",
+    "EMPLOYEE_SYNC_QUEUE_NAME": "employee-sync-queue"
   }
 }
