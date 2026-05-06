@@ -1,6 +1,7 @@
 import axios from "axios";
 import { withRetry } from "./retry.mjs";
 import { CENTRAL_REACH_METADATA_FIELD_TYPES } from "../constants/centralReach.mjs";
+import { HUBSPOT_EMPLOYEE_TYPES } from "../constants/hubspot.mjs";
 
 let centralReachHttpClient = null;
 let centralReachConfig = null;
@@ -8,6 +9,15 @@ let tokenCache = {
   accessToken: null,
   expiresAtMs: 0
 };
+const EMPLOYEE_CONTACT_FORMS = {
+  [HUBSPOT_EMPLOYEE_TYPES.BT_RBT]: "Behavior Technician NY",
+  [HUBSPOT_EMPLOYEE_TYPES.BCBA]: "Admin"
+};
+
+export function getEmployeeContactForm(employeeType) {
+  const normalizedType = String(employeeType || "").trim();
+  return EMPLOYEE_CONTACT_FORMS[normalizedType] || null;
+}
 
 export function createCentralReachClient(config) {
   centralReachConfig = config;
@@ -275,8 +285,13 @@ async function updateEmployeeByExternalSystemId(payload) {
 
 async function createEmployee(payload) {
   const createPayload = { ...payload };
+  const contactForm = getEmployeeContactForm(payload?.employeeType);
   delete createPayload.employeeId;
   delete createPayload.contactId;
+  delete createPayload.employeeType;
+  if (contactForm) {
+    createPayload.ContactForm = contactForm;
+  }
 
   const response = await crRequest("/contacts/employee", {
     method: "POST",
@@ -445,6 +460,7 @@ export async function createOrUpdateEmployee(payload) {
     options.putOnlyMode === undefined || options.putOnlyMode === null
       ? true
       : Boolean(options.putOnlyMode);
+  const employeeType = String(options.employeeType || "").trim();
 
   if (!employeePayload) {
     throw new Error("CentralReach employee payload must be an object");
@@ -481,7 +497,10 @@ export async function createOrUpdateEmployee(payload) {
   }
 
   try {
-    return await createEmployee(employeePayload);
+    return await createEmployee({
+      ...employeePayload,
+      ...(employeeType ? { employeeType } : {})
+    });
   } catch (error) {
     const status = error?.response?.status;
     if (status === 400) {

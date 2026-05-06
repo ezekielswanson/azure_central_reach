@@ -131,6 +131,7 @@ export function buildClientPayload({ deal, config }) {
     Gender: mapGender(props.phi_gender),
     PrimaryEmail: isValidEmail(email) ? email : null,
     PhoneCell: normalizePhone(props.phone),
+    PhoneHome: normalizePhone(props.phone_number__second_),
     AddressLine1:
       props.if_services_will_be_in_more_than_one_location__list_the_other_addres ||
       props.street_address ||

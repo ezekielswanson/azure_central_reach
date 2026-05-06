@@ -6,7 +6,7 @@ import {
   createHubSpotClient,
   getBtRbtRecordById,
   getBcbaRecordById,
-  updateObjectProperties
+  updateEmployeeWritebackWithFallback
 } from "../lib/hubspotClient.mjs";
 import {
   createCentralReachClient,
@@ -229,7 +229,15 @@ export async function runEmployeeSyncWorkflow(
   const preserveIdentifiers =
     dependencies.buildEmployeePayloadForContactId || buildEmployeePayloadForContactId;
   const pushMetadata = dependencies.updateClientMetadata || updateClientMetadata;
-  const pushWriteback = dependencies.updateObjectProperties || updateObjectProperties;
+  const writeEmployeeWriteback =
+    dependencies.writeEmployeeWriteback ||
+    (async ({ objectTypeId, recordId, properties, employeeIdProperty }) =>
+      updateEmployeeWritebackWithFallback({
+        objectTypeId,
+        recordId,
+        properties,
+        employeeIdProperty
+      }));
   const saveState = dependencies.putState || putState;
   const mapPayload = dependencies.buildEmployeePayload || buildEmployeePayload;
   const validatePayload = dependencies.validateEmployeePayload || validateEmployeePayload;
@@ -268,10 +276,15 @@ export async function runEmployeeSyncWorkflow(
         : shouldSyncBcba(hubspotProps);
 
     if (!shouldSync) {
-      await pushWriteback(objectTypeId, normalizedRecordId, {
+      await writeEmployeeWriteback({
+        objectTypeId,
+        recordId: normalizedRecordId,
+        employeeIdProperty,
+        properties: {
         last_sync_status: "noop",
         last_sync_at: new Date().toISOString(),
         last_sync_error: ""
+        }
       });
 
       await saveState({
@@ -304,6 +317,16 @@ export async function runEmployeeSyncWorkflow(
       employeeType: normalizedEmployeeType,
       config
     });
+    const mappingWarnings = Array.isArray(mapped.warnings) ? mapped.warnings : [];
+    if (mappingWarnings.length > 0) {
+      logger("warn", "Employee mapping warnings.", {
+        workflow: "employeeSync",
+        recordId: normalizedRecordId,
+        employeeType: normalizedEmployeeType,
+        warningCodes: mappingWarnings.map((item) => item?.code).filter(Boolean),
+        invocationId: context?.invocationId || null
+      });
+    }
     const validation = validatePayload(mapped.employeePayload);
     if (!validation.isValid) {
       throw new Error(`PayloadValidationError: ${validation.errors.join(", ")}`);
@@ -317,31 +340,27 @@ export async function runEmployeeSyncWorkflow(
       outboundPayload = preserveIdentifiers(mapped.employeePayload, existingCrEmployee).payload;
     }
 
-    const payloadHashInput =
-      normalizedEmployeeType === HUBSPOT_EMPLOYEE_TYPES.BT_RBT
-        ? {
-            employee: outboundPayload,
-            workAddress: mapped.metadataValues?.[133819] || ""
-          }
-        : {
-            employee: outboundPayload,
-            metadata: mapped.metadataValues || {}
-          };
+    const payloadHashInput = {
+      employee: outboundPayload,
+      metadata: mapped.metadataValues || {}
+    };
 
     const payloadHash = digestPayload(payloadHashInput);
     const previousHash = String(hubspotProps?.last_sync_hash || "");
-    if (previousHash && previousHash === payloadHash) {
-      await pushWriteback(
+    const canNoopByHash = Boolean(previousHash && previousHash === payloadHash && existingContactId);
+    if (canNoopByHash) {
+      const writebackResult = await writeEmployeeWriteback({
         objectTypeId,
-        normalizedRecordId,
-        buildWritebackPropertyPatch({
+        recordId: normalizedRecordId,
+        employeeIdProperty,
+        properties: buildWritebackPropertyPatch({
           employeeType: normalizedEmployeeType,
           employeeIdProperty,
           payloadHash,
           status: "noop",
           contactId: existingContactId
         })
-      );
+      });
 
       await saveState({
         pk: EMPLOYEE_STATE_PK,
@@ -355,6 +374,8 @@ export async function runEmployeeSyncWorkflow(
           operation: "noop",
           crContactId: existingContactId,
           payloadHash,
+          writebackFallbackUsed: Boolean(writebackResult?.fallbackUsed),
+          mappingWarningCodes: mappingWarnings.map((item) => item?.code).filter(Boolean),
           hsLastModifiedDate: hsLastModifiedDate ? String(hsLastModifiedDate) : null,
           invocationId: context?.invocationId || null,
           updatedAt: new Date().toISOString()
@@ -367,12 +388,14 @@ export async function runEmployeeSyncWorkflow(
         employeeType: normalizedEmployeeType,
         status: "noop",
         operation: "noop",
-        crContactId: existingContactId
+        crContactId: existingContactId,
+        writebackFallbackUsed: Boolean(writebackResult?.fallbackUsed)
       };
     }
 
     const syncResult = await upsertEmployee({
       payload: outboundPayload,
+      employeeType: normalizedEmployeeType,
       existingContactId,
       allowEmployeeCreate: config.features.allowEmployeeCreate,
       putOnlyMode: config.features.putOnlyMode
@@ -380,15 +403,30 @@ export async function runEmployeeSyncWorkflow(
 
     const status = syncResult.operation === "blocked" ? "blocked" : "success";
     const contactId = syncResult.crContactId || existingContactId || null;
+    let metadataSyncSummary = null;
 
     if (contactId && mapped.metadataValues && Object.keys(mapped.metadataValues).length > 0) {
-      await pushMetadata(contactId, mapped.metadataValues, { labelIds: mapped.requiredLabelIds || [] });
+      metadataSyncSummary = await pushMetadata(contactId, mapped.metadataValues, {
+        labelIds: mapped.requiredLabelIds || []
+      });
+      if ((metadataSyncSummary?.failedCount || 0) > 0) {
+        logger("warn", "Employee metadata write had failures.", {
+          workflow: "employeeSync",
+          recordId: normalizedRecordId,
+          employeeType: normalizedEmployeeType,
+          crContactId: contactId,
+          failedCount: metadataSyncSummary.failedCount,
+          failedFieldIds: metadataSyncSummary.failedFieldIds || [],
+          invocationId: context?.invocationId || null
+        });
+      }
     }
 
-    await pushWriteback(
+    const writebackResult = await writeEmployeeWriteback({
       objectTypeId,
-      normalizedRecordId,
-      buildWritebackPropertyPatch({
+      recordId: normalizedRecordId,
+      employeeIdProperty,
+      properties: buildWritebackPropertyPatch({
         employeeType: normalizedEmployeeType,
         employeeIdProperty,
         payloadHash,
@@ -396,7 +434,7 @@ export async function runEmployeeSyncWorkflow(
         contactId,
         errorMessage: syncResult.reason || ""
       })
-    );
+    });
 
     await saveState({
       pk: EMPLOYEE_STATE_PK,
@@ -410,6 +448,10 @@ export async function runEmployeeSyncWorkflow(
         operation: syncResult.operation,
         crContactId: contactId,
         payloadHash,
+        metadataUpdatedCount: metadataSyncSummary?.updatedCount ?? null,
+        metadataFailedCount: metadataSyncSummary?.failedCount ?? null,
+        writebackFallbackUsed: Boolean(writebackResult?.fallbackUsed),
+        mappingWarningCodes: mappingWarnings.map((item) => item?.code).filter(Boolean),
         hsLastModifiedDate: hsLastModifiedDate ? String(hsLastModifiedDate) : null,
         invocationId: context?.invocationId || null,
         updatedAt: new Date().toISOString()
@@ -422,7 +464,10 @@ export async function runEmployeeSyncWorkflow(
       employeeType: normalizedEmployeeType,
       status,
       operation: syncResult.operation,
-      crContactId: contactId
+      crContactId: contactId,
+      metadataUpdatedCount: metadataSyncSummary?.updatedCount ?? 0,
+      metadataFailedCount: metadataSyncSummary?.failedCount ?? 0,
+      writebackFallbackUsed: Boolean(writebackResult?.fallbackUsed)
     };
   } catch (error) {
     logger(

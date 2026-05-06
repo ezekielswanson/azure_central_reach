@@ -20,7 +20,7 @@ export async function intakePoller(timer, context) {
 }
 
 app.timer("intakePoller", {
-  // schedule: "0 */5 * * * *",
-  schedule: "0 * * * * *",
+  schedule: "0 */5 * * * *",
+  // schedule: "0 * * * * *",
   handler: intakePoller
 });

@@ -32,6 +32,7 @@ const REQUIRED_DEAL_PROPERTIES = [
   "phi_gender",
   "email",
   "phone",
+  "phone_number__second_",
   "if_services_will_be_in_more_than_one_location__list_the_other_addres",
   "street_address",
   "home_apt",

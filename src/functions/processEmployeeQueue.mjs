@@ -77,14 +77,22 @@ export async function processEmployeeQueue(message, context, dependencies = {}) 
 
     safeLog("info", "Employee queue message accepted.", queueMeta);
 
-    await runWorkflow({
+    const workflowResult = await runWorkflow({
       recordId: validated.recordId,
       employeeType: validated.employeeType,
       hsLastModifiedDate: validated.hsLastModifiedDate,
       context
     });
 
-    safeLog("info", "Employee queue message processed.", queueMeta);
+    safeLog("info", "Employee queue message processed.", {
+      ...queueMeta,
+      status: workflowResult?.status,
+      operation: workflowResult?.operation,
+      crContactId: workflowResult?.crContactId || undefined,
+      metadataUpdatedCount: workflowResult?.metadataUpdatedCount,
+      metadataFailedCount: workflowResult?.metadataFailedCount,
+      writebackFallbackUsed: workflowResult?.writebackFallbackUsed
+    });
   } catch (error) {
     const parsedBody = (() => {
       try {

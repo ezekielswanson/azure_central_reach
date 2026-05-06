@@ -15,6 +15,7 @@ test("buildClientPayload maps and normalizes AWS canonical fields", () => {
         phi_gender: "male",
         email: "  TeSt@Example.com ",
         phone: "+1 (212) 555-0101",
+        phone_number__second_: "(212) 555-0202",
         street_address: "123 Main St",
         home_apt: "Apt 2",
         location_city: "Albany",
@@ -29,6 +30,7 @@ test("buildClientPayload maps and normalizes AWS canonical fields", () => {
   assert.equal(payload.ExternalSystemId, "deal-1");
   assert.equal(payload.PrimaryEmail, "test@example.com");
   assert.equal(payload.PhoneCell, "2125550101");
+  assert.equal(payload.PhoneHome, "2125550202");
   assert.equal(payload.StateProvince, "NY");
   assert.equal(payload.Gender, "Male");
   assert.equal(payload.DateOfBirth, "2017-01-14T00:00:00.000Z");

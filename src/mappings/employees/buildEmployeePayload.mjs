@@ -144,6 +144,13 @@ function buildHubspotRecordUrl({ portalId, objectTypeId, recordId }) {
   return `https://app.hubspot.com/contacts/${portal}/record/${type}/${id}`;
 }
 
+function buildMissingPortalWarning() {
+  return {
+    code: "missing_hubspot_portal_id",
+    message: "HUBSPOT_PORTAL_ID is not set; skipping HubSpot record link metadata writeback."
+  };
+}
+
 function requiredBtRbtLabels({ btRbtType, stateCode }) {
   const labels = [CENTRAL_REACH_EMPLOYEE_LABELS.ALL_EMPLOYEES];
   if (stateCode === "NY") {
@@ -156,12 +163,11 @@ function requiredBtRbtLabels({ btRbtType, stateCode }) {
       labels.push(CENTRAL_REACH_EMPLOYEE_LABELS.RBT_NY);
     }
   }
-  if (stateCode === "CO" && btRbtType === "BT") {
-    labels.push(
-      CENTRAL_REACH_EMPLOYEE_LABELS.CLINICAL,
-      CENTRAL_REACH_EMPLOYEE_LABELS.CO_EMPLOYEE,
-      CENTRAL_REACH_EMPLOYEE_LABELS.RBT_CO
-    );
+  if (stateCode === "CO") {
+    labels.push(CENTRAL_REACH_EMPLOYEE_LABELS.CLINICAL, CENTRAL_REACH_EMPLOYEE_LABELS.CO_EMPLOYEE);
+    if (btRbtType === "BT" || btRbtType === "RBT") {
+      labels.push(CENTRAL_REACH_EMPLOYEE_LABELS.RBT_CO);
+    }
   }
   return labels;
 }
@@ -220,17 +226,21 @@ function buildBtRbtPayload({ record, config }) {
   });
 
   const metadataValues = {};
+  const warnings = [];
   if (workAddress) {
     metadataValues[CENTRAL_REACH_EMPLOYEE_METADATA_FIELDS.WORK_ADDRESS] = workAddress;
   }
   if (hubspotRecordUrl) {
     metadataValues[CENTRAL_REACH_EMPLOYEE_METADATA_FIELDS.HUBSPOT_LINK_TO_BT_RBT_RECORD] =
       hubspotRecordUrl;
+  } else if (!String(config?.hubspot?.hubspotPortalId || "").trim()) {
+    warnings.push(buildMissingPortalWarning());
   }
 
   return {
     employeePayload,
     metadataValues,
+    warnings,
     requiredLabelIds: requiredBtRbtLabels({ btRbtType, stateCode }),
     stateCode,
     employeeFamily: HUBSPOT_EMPLOYEE_TYPES.BT_RBT
@@ -276,15 +286,19 @@ function buildBcbaPayload({ record, config }) {
       properties.credentialed_insurances__ny
     )
   };
+  const warnings = [];
 
   if (hubspotRecordUrl) {
     metadataValues[CENTRAL_REACH_EMPLOYEE_METADATA_FIELDS.HUBSPOT_LINK_TO_BCBA_RECORD] =
       hubspotRecordUrl;
+  } else if (!String(config?.hubspot?.hubspotPortalId || "").trim()) {
+    warnings.push(buildMissingPortalWarning());
   }
 
   return {
     employeePayload,
     metadataValues,
+    warnings,
     requiredLabelIds: requiredBcbaLabels({ stateCode }),
     stateCode,
     employeeFamily: HUBSPOT_EMPLOYEE_TYPES.BCBA

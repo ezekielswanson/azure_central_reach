@@ -15,12 +15,7 @@ const EMPLOYEE_SEARCH_PROPERTIES = [
   "last_sync_error"
 ];
 
-function isLookbackFilterError(error) {
-  const status = error?.response?.status;
-  if (status !== 400 && status !== 422) {
-    return false;
-  }
-
+function extractHubspotErrorBlob(error) {
   const data = error?.response?.data || {};
   const messageParts = [];
 
@@ -45,10 +40,21 @@ function isLookbackFilterError(error) {
       if (typeof subError?.subCategory === "string") {
         messageParts.push(subError.subCategory);
       }
+      if (typeof subError?.code === "string") {
+        messageParts.push(subError.code);
+      }
     }
   }
 
-  const blob = messageParts.join(" ").toLowerCase();
+  return messageParts.join(" ").toLowerCase();
+}
+
+function isLookbackFilterError(error) {
+  const status = error?.response?.status;
+  if (status !== 400 && status !== 422) {
+    return false;
+  }
+  const blob = extractHubspotErrorBlob(error);
   return (
     blob.includes("hs_lastmodifieddate") &&
     (blob.includes("invalid") ||
@@ -264,6 +270,51 @@ export async function getDealById(dealId, properties = []) {
   });
 
   return response?.data || null;
+}
+
+function hubspotMissingProperty(error, propertyName) {
+  const status = error?.response?.status;
+  if (status !== 400 && status !== 422) {
+    return false;
+  }
+
+  const blob = extractHubspotErrorBlob(error);
+  const property = String(propertyName || "").trim().toLowerCase();
+  if (!property || !blob.includes(property)) {
+    return false;
+  }
+
+  return (
+    blob.includes("doesn't exist") ||
+    blob.includes("does not exist") ||
+    blob.includes("unknown property") ||
+    blob.includes("invalid property") ||
+    blob.includes("property")
+  );
+}
+
+export async function updateEmployeeWritebackWithFallback({
+  objectTypeId,
+  recordId,
+  properties,
+  employeeIdProperty = "employee_id"
+}) {
+  try {
+    await updateObjectProperties(objectTypeId, recordId, properties);
+    return { fallbackUsed: false, removedProperties: [] };
+  } catch (error) {
+    const propertyName = String(employeeIdProperty || "employee_id").trim() || "employee_id";
+    if (
+      Object.prototype.hasOwnProperty.call(properties || {}, propertyName) &&
+      hubspotMissingProperty(error, propertyName)
+    ) {
+      const fallbackProperties = { ...(properties || {}) };
+      delete fallbackProperties[propertyName];
+      await updateObjectProperties(objectTypeId, recordId, fallbackProperties);
+      return { fallbackUsed: true, removedProperties: [propertyName] };
+    }
+    throw error;
+  }
 }
 
 export async function getObjectById(objectTypeId, objectId, properties = []) {
