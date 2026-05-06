@@ -7,45 +7,67 @@ The AWS repository remains read-only reference material and should not be modifi
 
 1. Ensure Node.js and Azure Functions Core Tools are installed locally.
 2. Copy `local.settings.example.json` to `local.settings.json`.
-3. Fill in real values in `local.settings.json` and keep it uncommitted.
-4. Install dependencies:
+3. Install dependencies:
    - `npm install`
 
-## Local Run
+## A. Scaffold Smoke Test
 
-- Start Azure Functions locally:
-  - `npm run start`
+Purpose: verify local HTTP scaffold wiring only.
 
-## Local Development Notes
+1. Keep local timer/queue functions disabled in `local.settings.json`:
+   - `AzureWebJobs.intakePoller.Disabled=true`
+   - `AzureWebJobs.processClientQueue.Disabled=true`
+   - `AzureWebJobs.processEmployeeQueue.Disabled=true`
+2. Run:
+   - `npm test`
+   - `npm run start`
+   - `curl -i http://localhost:7071/api/connectivity-test`
 
-- `local.settings.json` is local-only and must never be committed.
-- Azure Function App settings configured in the Azure Portal do not automatically sync to your local `local.settings.json`.
-- For an initial local HTTP-only test, keep these settings enabled in `local.settings.json`:
-  - `AzureWebJobs.intakePoller.Disabled=true`
-  - `AzureWebJobs.processClientQueue.Disabled=true`
-  - `AzureWebJobs.processEmployeeQueue.Disabled=true`
-- This allows local testing of HTTP functions such as `connectivityTest` before setting up local Storage/Azurite and Service Bus connectivity.
-- If `local.settings.json` still contains `CHANGE_ME` placeholders, `/api/connectivity-test` should return `ok=false` with `placeholderNames` listed.
-- That is expected until real local values are added.
-- The endpoint should still return a JSON body and not an empty `500` response.
-- To run timer triggers locally later, configure `AzureWebJobsStorage` with Azurite or a real Azure Storage connection string.
-- To run Service Bus queue triggers locally later, add `SERVICE_BUS_CONNECTION_STRING` manually in `local.settings.json` and never commit it to Git.
+Expected behavior:
+- This can run with placeholder values.
+- `/api/connectivity-test` returns a JSON response and reports missing/placeholder config safely.
 
-## Deploy Later
+## B. Intake Poller Manual Test
 
-When ready for deployment, publish with:
+Purpose: run intake poller business logic manually through HTTP before enabling the timer.
 
-- `func azure functionapp publish <your-function-app-name>`
+1. Configure real local intake values in `local.settings.json` (HubSpot, Cosmos, and Service Bus intake dependencies).
+2. Run:
+   - `npm run start`
+   - `curl -i -X POST http://localhost:7071/api/intake-poller-test`
 
-Do not deploy yet during scaffolding.
+Behavior notes:
+- If required intake configuration is missing, endpoint returns HTTP 500 with:
+  - `ok: false`
+  - `error.code: "MISSING_REQUIRED_CONFIG"`
+- In missing-config mode, endpoint does not perform external network calls.
+
+## C. Deployment Gate
+
+Do not deploy until manual intake poller test confirms:
+- HubSpot eligible deals can be fetched.
+- `shouldSync` logic runs.
+- Cosmos lease/dedupe state works.
+- Service Bus client-sync messages are enqueued.
+- No PHI appears in logs, state, or Service Bus messages.
+
+## D. Deployment Command Later
+
+When deployment is explicitly approved:
+- `func azure functionapp publish centralreachfunction`
+
+## E. Timer Enablement
+
+Do not enable scheduled intake polling until the deployed manual intake endpoint succeeds in Azure.
 
 ## Configuration Notes
 
-- Environment variables belong in Azure Function App settings for deployed environments.
-- `local.settings.json` is for local-only values and should never be committed.
+- `local.settings.json` is local-only and must never be committed.
+- Azure Function App settings configured in Azure do not automatically sync to local.
+- Environment variables for deployed environments belong in Function App settings.
 
 ## Build Order
 
-1. Intake poller (phase 1)
+1. Intake poller / intake queue (phase 1)
 2. Client sync (phase 2)
-3. Employee sync for BT/RBT and BCBA (phase 3)
+3. Employee sync (phase 3)

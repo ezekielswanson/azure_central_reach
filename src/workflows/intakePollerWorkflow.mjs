@@ -1,4 +1,4 @@
-import { getConfig } from "../lib/config.mjs";
+import { getIntakePollerConfig } from "../lib/config.mjs";
 import { safeLog } from "../lib/safeLog.mjs";
 import { buildErrorLog } from "../lib/errors.mjs";
 import { createHubSpotClient, searchIntakeCompleteDeals } from "../lib/hubspotClient.mjs";
@@ -13,18 +13,50 @@ import { createServiceBusClient, sendClientSyncMessage } from "../lib/serviceBus
 
 const POLLER_LEASE_PK = "workflow:intake-poller";
 const POLLER_LEASE_ID = "active-lease";
+const DEDUPE_PK = "dedupe:client-sync";
+
+function parseTimestamp(value) {
+  if (!value) {
+    return null;
+  }
+
+  const asEpoch = new Date(value).getTime();
+  return Number.isFinite(asEpoch) ? asEpoch : null;
+}
+
+export function shouldSyncDeal(candidate) {
+  const properties = candidate?.properties || {};
+  const hsLastModifiedDate = parseTimestamp(properties.hs_lastmodifieddate);
+  const integrationLastWrite = parseTimestamp(properties.integration_last_write);
+
+  if (!integrationLastWrite) {
+    return true;
+  }
+  if (!hsLastModifiedDate) {
+    return false;
+  }
+
+  return hsLastModifiedDate > integrationLastWrite;
+}
+
+export function buildIntakeDedupeId(dealId, hsLastModifiedDate) {
+  return `${String(dealId)}:${String(hsLastModifiedDate)}`;
+}
 
 export async function runIntakePollerWorkflow(context) {
-  const config = getConfig();
+  void context;
+  const config = getIntakePollerConfig();
   createHubSpotClient(config);
   createStateClient(config);
   createServiceBusClient(config);
 
   const summary = {
     leaseAcquired: false,
-    dealsScanned: 0,
-    dealsDeduped: 0,
-    messagesEnqueued: 0
+    candidatesFetched: 0,
+    skippedAlreadyProcessed: 0,
+    skippedShouldSyncFalse: 0,
+    messagesEnqueued: 0,
+    errorsCount: 0
   };
 
   const leaseAcquired = await acquireLease({
@@ -40,50 +72,93 @@ export async function runIntakePollerWorkflow(context) {
   }
 
   try {
-    let deals = [];
+    let candidates = [];
     try {
-      deals = await searchIntakeCompleteDeals({ limit: config.limits.maxDealsPerRun });
+      candidates = await searchIntakeCompleteDeals({
+        limit: config.limits.maxDealsPerRun,
+        maxSearchRequestsPerRun: config.limits.maxSearchRequestsPerRun,
+        lookbackMinutes: config.limits.lookbackMinutes,
+        pipelineId: config.hubspot.dealPipelineId,
+        stageAllowlist: config.hubspot.stageAllowlist
+      });
     } catch (error) {
       safeLog(
-        "warn",
-        "HubSpot intake search is not implemented yet; returning zero deals.",
+        "error",
+        "HubSpot intake search failed.",
         buildErrorLog({ workflow: "intakePoller", stage: "searchDeals", error })
       );
+      summary.errorsCount += 1;
+      return summary;
     }
 
-    for (const deal of deals) {
-      const dealId = String(deal?.id ?? "");
+    summary.candidatesFetched = candidates.length;
+
+    for (const candidate of candidates) {
+      const dealId = String(candidate?.id ?? candidate?.properties?.hs_object_id ?? "");
+      const hsLastModifiedDate = String(candidate?.properties?.hs_lastmodifieddate ?? "");
       if (!dealId) {
+        summary.skippedShouldSyncFalse += 1;
         continue;
       }
 
-      summary.dealsScanned += 1;
-      const dedupePk = "dedupe:hubspotDeal";
-      const dedupeId = `deal:${dealId}`;
-      const alreadyProcessed = await hasState({ pk: dedupePk, id: dedupeId });
+      if (!hsLastModifiedDate || !shouldSyncDeal(candidate)) {
+        summary.skippedShouldSyncFalse += 1;
+        continue;
+      }
+
+      const dedupeId = buildIntakeDedupeId(dealId, hsLastModifiedDate);
+      const alreadyProcessed = await hasState({ pk: DEDUPE_PK, id: dedupeId });
 
       if (alreadyProcessed) {
-        summary.dealsDeduped += 1;
+        summary.skippedAlreadyProcessed += 1;
         continue;
       }
 
-      await sendClientSyncMessage({
-        dealId,
-        workflow: "intakePoller"
-      });
-      summary.messagesEnqueued += 1;
+      try {
+        await sendClientSyncMessage({
+          dealId,
+          hsLastModifiedDate,
+          source: "intakePoller",
+          workflow: "clientSync"
+        });
+        summary.messagesEnqueued += 1;
 
-      await putState({
-        pk: dedupePk,
-        id: dedupeId,
-        type: "dedupe",
-        ttlSeconds: config.ttl.dedupeTtlSeconds,
-        data: { source: "hubspotDeal" }
-      });
+        await putState({
+          pk: DEDUPE_PK,
+          id: dedupeId,
+          type: "dedupe",
+          ttlSeconds: config.ttl.dedupeTtlSeconds,
+          data: {
+            module: "client",
+            source: "intakePoller"
+          }
+        });
+      } catch (error) {
+        summary.errorsCount += 1;
+        safeLog(
+          "error",
+          "Failed processing intake candidate.",
+          buildErrorLog({
+            workflow: "intakePoller",
+            stage: "processCandidate",
+            error,
+            recordId: dealId
+          })
+        );
+      }
     }
 
     return summary;
   } finally {
-    await releaseLease({ pk: POLLER_LEASE_PK, id: POLLER_LEASE_ID });
+    try {
+      await releaseLease({ pk: POLLER_LEASE_PK, id: POLLER_LEASE_ID });
+    } catch (error) {
+      safeLog(
+        "error",
+        "Failed releasing intake lease.",
+        buildErrorLog({ workflow: "intakePoller", stage: "releaseLease", error })
+      );
+      summary.errorsCount += 1;
+    }
   }
 }

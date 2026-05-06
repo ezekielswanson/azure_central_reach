@@ -27,6 +27,22 @@ const REQUIRED_ENV_NAMES = [
   "EMPLOYEE_SYNC_QUEUE_NAME"
 ];
 
+const REQUIRED_INTAKE_ENV_NAMES = [
+  "HUBSPOT_PRIVATE_APP_TOKEN",
+  "HUBSPOT_BASE_URL",
+  "HS_DEAL_PIPELINE_ID",
+  "HS_STAGE_ALLOWLIST_JSON",
+  "MAX_DEALS_PER_RUN",
+  "DEDUPE_TTL_SECONDS",
+  "LEASE_TTL_SECONDS",
+  "COSMOS_ENDPOINT",
+  "COSMOS_KEY",
+  "COSMOS_DATABASE_ID",
+  "COSMOS_CONTAINER_ID",
+  "SERVICE_BUS_CONNECTION_STRING",
+  "CLIENT_SYNC_QUEUE_NAME"
+];
+
 export function getRequiredEnv(name) {
   const value = process.env[name];
   if (!value || value.trim() === "") {
@@ -81,6 +97,94 @@ export function validateConfig() {
     isValid: missing.length === 0 && placeholders.length === 0,
     missing,
     placeholders
+  };
+}
+
+function validateEnvNames(requiredNames) {
+  const missing = [];
+  const placeholders = [];
+
+  requiredNames.forEach((name) => {
+    const value = process.env[name];
+    if (!value || value.trim() === "") {
+      missing.push(name);
+      return;
+    }
+
+    if (isPlaceholderValue(value)) {
+      placeholders.push(name);
+    }
+  });
+
+  return {
+    isValid: missing.length === 0 && placeholders.length === 0,
+    missing,
+    placeholders
+  };
+}
+
+function parseRequiredJsonArray(name) {
+  const rawValue = getRequiredEnv(name);
+  let parsed;
+
+  try {
+    parsed = JSON.parse(rawValue);
+  } catch {
+    throw new Error(`Configuration validation failed. ${name} must be valid JSON array`);
+  }
+
+  if (!Array.isArray(parsed) || parsed.length === 0) {
+    throw new Error(`Configuration validation failed. ${name} must be a non-empty JSON array`);
+  }
+
+  return parsed.map((value) => String(value));
+}
+
+export function validateIntakePollerConfig() {
+  return validateEnvNames(REQUIRED_INTAKE_ENV_NAMES);
+}
+
+export function getIntakePollerConfig() {
+  const validation = validateIntakePollerConfig();
+  if (!validation.isValid) {
+    const missingMessage =
+      validation.missing.length > 0
+        ? `Missing variables: ${validation.missing.join(", ")}`
+        : "";
+    const placeholderMessage =
+      validation.placeholders.length > 0
+        ? `Placeholder variables: ${validation.placeholders.join(", ")}`
+        : "";
+    const details = [missingMessage, placeholderMessage].filter(Boolean).join(". ");
+    throw new Error(`Configuration validation failed. ${details}`);
+  }
+
+  return {
+    hubspot: {
+      privateAppToken: getRequiredEnv("HUBSPOT_PRIVATE_APP_TOKEN"),
+      baseUrl: getRequiredEnv("HUBSPOT_BASE_URL"),
+      dealPipelineId: getRequiredEnv("HS_DEAL_PIPELINE_ID"),
+      stageAllowlist: parseRequiredJsonArray("HS_STAGE_ALLOWLIST_JSON")
+    },
+    limits: {
+      maxDealsPerRun: Number(getRequiredEnv("MAX_DEALS_PER_RUN")),
+      maxSearchRequestsPerRun: Number(getOptionalEnv("MAX_SEARCH_REQUESTS_PER_SECTION", "1")),
+      lookbackMinutes: Number(getOptionalEnv("LOOKBACK_MINUTES", "15"))
+    },
+    ttl: {
+      dedupeTtlSeconds: Number(getRequiredEnv("DEDUPE_TTL_SECONDS")),
+      leaseTtlSeconds: Number(getRequiredEnv("LEASE_TTL_SECONDS"))
+    },
+    state: {
+      cosmosEndpoint: getRequiredEnv("COSMOS_ENDPOINT"),
+      cosmosKey: getRequiredEnv("COSMOS_KEY"),
+      cosmosDatabaseId: getRequiredEnv("COSMOS_DATABASE_ID"),
+      cosmosContainerId: getRequiredEnv("COSMOS_CONTAINER_ID")
+    },
+    serviceBus: {
+      connectionString: getRequiredEnv("SERVICE_BUS_CONNECTION_STRING"),
+      clientSyncQueueName: getRequiredEnv("CLIENT_SYNC_QUEUE_NAME")
+    }
   };
 }
 
