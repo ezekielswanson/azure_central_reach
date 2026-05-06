@@ -190,13 +190,52 @@ export async function searchIntakeCompleteDeals({
   return deals.slice(0, cappedLimit);
 }
 
-export async function getDealById(dealId) {
-  void dealId;
-  throw new Error("Not implemented yet");
+export async function getDealById(dealId, properties = []) {
+  if (!hubSpotHttpClient) {
+    throw new Error("HubSpot client is not initialized");
+  }
+
+  const id = String(dealId || "").trim();
+  if (!id) {
+    throw new Error("HubSpot dealId is required");
+  }
+
+  const requestedProperties = Array.isArray(properties) ? properties : [];
+  const params = requestedProperties.length
+    ? { properties: requestedProperties.join(",") }
+    : undefined;
+
+  const response = await withRetry(() => hubSpotHttpClient.get(`/crm/v3/objects/deals/${id}`, { params }), {
+    maxAttempts: 3,
+    baseDelayMs: 400,
+    maxDelayMs: 5000
+  });
+
+  return response?.data || null;
 }
 
 export async function updateDealProperties(dealId, properties) {
-  void dealId;
-  void properties;
-  throw new Error("Not implemented yet");
+  if (!hubSpotHttpClient) {
+    throw new Error("HubSpot client is not initialized");
+  }
+
+  const id = String(dealId || "").trim();
+  if (!id) {
+    throw new Error("HubSpot dealId is required");
+  }
+
+  if (!properties || typeof properties !== "object") {
+    throw new Error("HubSpot properties payload must be an object");
+  }
+
+  const response = await withRetry(
+    () => hubSpotHttpClient.patch(`/crm/v3/objects/deals/${id}`, { properties }),
+    {
+      maxAttempts: 3,
+      baseDelayMs: 400,
+      maxDelayMs: 5000
+    }
+  );
+
+  return response?.data || null;
 }

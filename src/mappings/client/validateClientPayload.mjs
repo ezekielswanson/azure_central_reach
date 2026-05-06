@@ -3,6 +3,15 @@ export function validateClientPayload(payload) {
     return { isValid: false, errors: ["Payload must be an object"] };
   }
 
-  // TODO: add client payload validation rules in phase 2.
-  return { isValid: true, errors: [] };
+  const errors = [];
+
+  if (!payload.FirstName) {
+    errors.push("FirstName is required");
+  }
+
+  if (!payload.LastName) {
+    errors.push("LastName is required");
+  }
+
+  return { isValid: errors.length === 0, errors };
 }

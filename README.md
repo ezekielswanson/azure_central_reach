@@ -75,10 +75,28 @@ Do not enable scheduled intake polling until the deployed manual intake endpoint
 ## Client Queue Trigger
 
 - `processClientQueue` is the production Service Bus trigger path for client sync.
-- Keep `AzureWebJobs.processClientQueue.Disabled=true` until `runClientSyncWorkflow` is fully implemented.
-- Once client sync is built, full production-level local test should use:
-  - `AzureWebJobs.intakePoller.Disabled=false`
-  - `AzureWebJobs.processClientQueue.Disabled=false`
-  - `AzureWebJobs.processEmployeeQueue.Disabled=true`
+- `runClientSyncWorkflow` is invoked from queue messages and should not be bypassed in production.
+- Keep `client-sync-test` as a dev scaffold only; do not use it as the primary sync path.
 - `processClientQueue` should never silently consume messages without syncing.
 - Invalid queue messages should fail safely and rely on Service Bus retry/dead-letter behavior.
+
+## Client Sync Testing Stages
+
+1. Run local tests first:
+   - `npm test`
+2. Start the Functions host:
+   - `npm run start`
+3. Optional dev-only scaffold check (not production path):
+   - `curl -i -X POST "http://localhost:7071/api/client-sync-test" -H "Content-Type: application/json" -d '{"dealId":"TEST_DEAL_ID"}'`
+
+### Full Production-Level Local Client Sync Test
+
+After unit tests pass and local settings contain real non-placeholder integration values:
+
+- `AzureWebJobs.intakePoller.Disabled=false`
+- `AzureWebJobs.processClientQueue.Disabled=false`
+- `AzureWebJobs.processEmployeeQueue.Disabled=true`
+
+Expected production path:
+
+- `timer -> intakePoller -> Service Bus client-sync-queue -> processClientQueue -> runClientSyncWorkflow`
