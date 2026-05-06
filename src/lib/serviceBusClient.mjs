@@ -58,12 +58,20 @@ export async function sendEmployeeSyncMessage(message) {
     throw new Error("Service Bus client is not initialized");
   }
 
+  const recordId = String(message.recordId || "");
+  const employeeType = String(message.employeeType || "");
+  const hsLastModifiedDate = String(message.hsLastModifiedDate || "");
+  const messageIdSource = `${employeeType}:${recordId}:${hsLastModifiedDate}`;
+
   await employeeSyncSender.sendMessages({
     body: {
-      recordId: message.recordId,
-      employeeType: message.employeeType,
+      recordId,
+      employeeType,
+      hsLastModifiedDate,
       workflow: message.workflow || "employeeSync",
+      source: message.source || "employeePoller",
       enqueuedAt: new Date().toISOString()
-    }
+    },
+    messageId: sha256(messageIdSource)
   });
 }

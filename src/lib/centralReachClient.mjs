@@ -92,6 +92,42 @@ function extractCrContactId(data) {
   return null;
 }
 
+function readCrExternalSystemId(data) {
+  const candidates = [
+    data?.externalSystemId,
+    data?.ExternalSystemId,
+    data?.employee?.externalSystemId,
+    data?.employee?.ExternalSystemId,
+    data?.contact?.externalSystemId,
+    data?.contact?.ExternalSystemId,
+    data?.result?.externalSystemId,
+    data?.result?.ExternalSystemId
+  ];
+
+  for (const candidate of candidates) {
+    if (candidate !== null && candidate !== undefined && String(candidate).trim() !== "") {
+      return String(candidate);
+    }
+  }
+
+  return null;
+}
+
+function responseLooksNotFound(data) {
+  const text = [
+    data?.message,
+    data?.responseStatus?.message,
+    ...(Array.isArray(data?.responseStatus?.errors)
+      ? data.responseStatus.errors.map((item) => `${item?.message ?? ""} ${item?.errorCode ?? ""}`)
+      : [])
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+
+  return /not\s*found|no\s*match|unable\s*to\s*find/.test(text);
+}
+
 async function crRequest(path, { method = "GET", body, suppressRetry = false } = {}) {
   if (!centralReachHttpClient || !centralReachConfig) {
     throw new Error("CentralReach client is not initialized");
@@ -158,6 +194,123 @@ export async function createOrUpdateClient(payloadOrOptions) {
     operation: "create",
     crContactId
   };
+}
+
+export async function getEmployeeByContactId(contactId) {
+  const normalizedId = String(contactId || "").trim();
+  if (!normalizedId) {
+    throw new Error("CentralReach employee contactId is required");
+  }
+
+  return crRequest(`/contacts/employee/${normalizedId}`, { method: "GET" });
+}
+
+export function buildEmployeePayloadForContactId(payload, existingEmployee = {}) {
+  const nextPayload = payload && typeof payload === "object" ? { ...payload } : {};
+  const existingExternalSystemId = readCrExternalSystemId(existingEmployee);
+  const existingPrimaryEmail =
+    existingEmployee?.primaryEmail || existingEmployee?.employee?.primaryEmail || null;
+
+  if (existingExternalSystemId) {
+    nextPayload.externalSystemId = existingExternalSystemId;
+  }
+  if (existingPrimaryEmail) {
+    nextPayload.primaryEmail = existingPrimaryEmail;
+  }
+
+  return {
+    payload: nextPayload,
+    preservedExternalSystemId: Boolean(existingExternalSystemId),
+    preservedPrimaryEmail: Boolean(existingPrimaryEmail)
+  };
+}
+
+async function updateEmployeeByContactId(contactId, payload) {
+  const normalizedId = String(contactId || "").trim();
+  if (!normalizedId) {
+    throw new Error("CentralReach employee contactId is required");
+  }
+
+  await crRequest(`/contacts/employee/${normalizedId}`, {
+    method: "PUT",
+    body: payload
+  });
+
+  return {
+    operation: "update",
+    crContactId: normalizedId
+  };
+}
+
+async function updateEmployeeByExternalSystemId(payload) {
+  let response;
+  try {
+    response = await crRequest("/contacts/employee/byExternalSystemId", {
+      method: "PUT",
+      body: payload
+    });
+  } catch (error) {
+    const status = error?.response?.status;
+    const errorBody = error?.response?.data || {};
+
+    // AWS behavior treats not-found by external id as "no match", not a hard failure.
+    if (status === 404 || responseLooksNotFound(errorBody)) {
+      return { found: false, crContactId: null };
+    }
+
+    throw error;
+  }
+
+  const crContactId = extractCrContactId(response);
+  if (!crContactId || responseLooksNotFound(response)) {
+    return { found: false, crContactId: null };
+  }
+
+  return {
+    found: true,
+    crContactId,
+    operation: "update"
+  };
+}
+
+async function createEmployee(payload) {
+  const createPayload = { ...payload };
+  delete createPayload.employeeId;
+  delete createPayload.contactId;
+
+  const response = await crRequest("/contacts/employee", {
+    method: "POST",
+    body: createPayload
+  });
+  const crContactId = extractCrContactId(response);
+  if (!crContactId) {
+    throw new Error("CentralReach employee create succeeded but returned no contactId");
+  }
+
+  return {
+    operation: "create",
+    crContactId
+  };
+}
+
+function extractCreateErrorReason(error) {
+  const data = error?.response?.data || {};
+  const parts = [];
+
+  if (typeof data?.message === "string") {
+    parts.push(data.message);
+  }
+  if (Array.isArray(data?.errors)) {
+    for (const item of data.errors) {
+      if (typeof item?.message === "string") {
+        parts.push(item.message);
+      }
+    }
+  }
+
+  const fallback = String(error?.message || "CentralReach employee create failed");
+  const merged = parts.join("; ").trim() || fallback;
+  return merged.slice(0, 500);
 }
 
 function mergeUniqueNumericIds(values) {
@@ -279,6 +432,65 @@ export async function updateClientMetadata(contactId, metadataValues, options = 
 }
 
 export async function createOrUpdateEmployee(payload) {
-  void payload;
-  throw new Error("Not implemented yet");
+  const options =
+    payload && typeof payload === "object" && Object.prototype.hasOwnProperty.call(payload, "payload")
+      ? payload
+      : { payload };
+
+  const employeePayload =
+    options.payload && typeof options.payload === "object" ? options.payload : null;
+  const existingContactId = String(options.existingContactId || "").trim() || null;
+  const allowEmployeeCreate = Boolean(options.allowEmployeeCreate);
+  const putOnlyMode =
+    options.putOnlyMode === undefined || options.putOnlyMode === null
+      ? true
+      : Boolean(options.putOnlyMode);
+
+  if (!employeePayload) {
+    throw new Error("CentralReach employee payload must be an object");
+  }
+
+  if (existingContactId) {
+    return updateEmployeeByContactId(existingContactId, employeePayload);
+  }
+
+  const byExternalResult = await updateEmployeeByExternalSystemId(employeePayload);
+  if (byExternalResult.found) {
+    return {
+      operation: "update",
+      crContactId: byExternalResult.crContactId
+    };
+  }
+
+  if (putOnlyMode) {
+    return {
+      operation: "blocked",
+      crContactId: null,
+      reason:
+        "PUT_ONLY_MODE enabled: create disabled until sandbox. Provide an existing employee_id or disable PUT_ONLY_MODE + enable ALLOW_EMPLOYEE_CREATE."
+    };
+  }
+
+  if (!allowEmployeeCreate) {
+    return {
+      operation: "blocked",
+      crContactId: null,
+      reason:
+        "ALLOW_EMPLOYEE_CREATE is false: create disabled. Enable ALLOW_EMPLOYEE_CREATE or provide an existing employee_id."
+    };
+  }
+
+  try {
+    return await createEmployee(employeePayload);
+  } catch (error) {
+    const status = error?.response?.status;
+    if (status === 400) {
+      return {
+        operation: "blocked",
+        crContactId: null,
+        reason: extractCreateErrorReason(error)
+      };
+    }
+    throw error;
+  }
 }

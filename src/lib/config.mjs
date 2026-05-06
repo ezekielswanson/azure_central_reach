@@ -24,7 +24,13 @@ const REQUIRED_ENV_NAMES = [
   "STATE_TTL_ATTR",
   "SERVICE_BUS_CONNECTION_STRING",
   "CLIENT_SYNC_QUEUE_NAME",
-  "EMPLOYEE_SYNC_QUEUE_NAME"
+  "EMPLOYEE_SYNC_QUEUE_NAME",
+  "HS_BT_RBT_OBJECT_TYPE_ID",
+  "HS_BT_RBT_PIPELINE_ID",
+  "HS_BT_RBT_STAGE_ALLOWLIST_JSON",
+  "HS_BCBA_OBJECT_TYPE_ID",
+  "HS_BCBA_PIPELINE_ID",
+  "HS_BCBA_STAGE_ALLOWLIST_JSON"
 ];
 
 const REQUIRED_INTAKE_ENV_NAMES = [
@@ -32,6 +38,8 @@ const REQUIRED_INTAKE_ENV_NAMES = [
   "HUBSPOT_BASE_URL",
   "HS_DEAL_PIPELINE_ID",
   "HS_STAGE_ALLOWLIST_JSON",
+  "MAX_BT_RBT_PER_RUN",
+  "MAX_BCBA_PER_RUN",
   "MAX_DEALS_PER_RUN",
   "DEDUPE_TTL_SECONDS",
   "LEASE_TTL_SECONDS",
@@ -40,7 +48,14 @@ const REQUIRED_INTAKE_ENV_NAMES = [
   "COSMOS_DATABASE_ID",
   "COSMOS_CONTAINER_ID",
   "SERVICE_BUS_CONNECTION_STRING",
-  "CLIENT_SYNC_QUEUE_NAME"
+  "CLIENT_SYNC_QUEUE_NAME",
+  "EMPLOYEE_SYNC_QUEUE_NAME",
+  "HS_BT_RBT_OBJECT_TYPE_ID",
+  "HS_BT_RBT_PIPELINE_ID",
+  "HS_BT_RBT_STAGE_ALLOWLIST_JSON",
+  "HS_BCBA_OBJECT_TYPE_ID",
+  "HS_BCBA_PIPELINE_ID",
+  "HS_BCBA_STAGE_ALLOWLIST_JSON"
 ];
 
 export function getRequiredEnv(name) {
@@ -164,10 +179,18 @@ export function getIntakePollerConfig() {
       privateAppToken: getRequiredEnv("HUBSPOT_PRIVATE_APP_TOKEN"),
       baseUrl: getRequiredEnv("HUBSPOT_BASE_URL"),
       dealPipelineId: getRequiredEnv("HS_DEAL_PIPELINE_ID"),
-      stageAllowlist: parseRequiredJsonArray("HS_STAGE_ALLOWLIST_JSON")
+      stageAllowlist: parseRequiredJsonArray("HS_STAGE_ALLOWLIST_JSON"),
+      btRbtObjectTypeId: getRequiredEnv("HS_BT_RBT_OBJECT_TYPE_ID"),
+      btRbtPipelineId: getRequiredEnv("HS_BT_RBT_PIPELINE_ID"),
+      btRbtStageAllowlist: parseRequiredJsonArray("HS_BT_RBT_STAGE_ALLOWLIST_JSON"),
+      bcbaObjectTypeId: getRequiredEnv("HS_BCBA_OBJECT_TYPE_ID"),
+      bcbaPipelineId: getRequiredEnv("HS_BCBA_PIPELINE_ID"),
+      bcbaStageAllowlist: parseRequiredJsonArray("HS_BCBA_STAGE_ALLOWLIST_JSON")
     },
     limits: {
       maxDealsPerRun: Number(getRequiredEnv("MAX_DEALS_PER_RUN")),
+      maxBtRbtPerRun: Number(getRequiredEnv("MAX_BT_RBT_PER_RUN")),
+      maxBcbaPerRun: Number(getRequiredEnv("MAX_BCBA_PER_RUN")),
       maxSearchRequestsPerRun: Number(getOptionalEnv("MAX_SEARCH_REQUESTS_PER_SECTION", "1")),
       lookbackMinutes: Number(getOptionalEnv("LOOKBACK_MINUTES", "15"))
     },
@@ -183,7 +206,8 @@ export function getIntakePollerConfig() {
     },
     serviceBus: {
       connectionString: getRequiredEnv("SERVICE_BUS_CONNECTION_STRING"),
-      clientSyncQueueName: getRequiredEnv("CLIENT_SYNC_QUEUE_NAME")
+      clientSyncQueueName: getRequiredEnv("CLIENT_SYNC_QUEUE_NAME"),
+      employeeSyncQueueName: getRequiredEnv("EMPLOYEE_SYNC_QUEUE_NAME")
     }
   };
 }
@@ -216,7 +240,15 @@ export function getConfig() {
       baseUrl: getRequiredEnv("HUBSPOT_BASE_URL"),
       dealPipelineId: getRequiredEnv("HS_DEAL_PIPELINE_ID"),
       stageAllowlistJson: getRequiredEnv("HS_STAGE_ALLOWLIST_JSON"),
-      crContactIdProperty: getRequiredEnv("HUBSPOT_CR_CONTACT_ID_PROPERTY")
+      crContactIdProperty: getRequiredEnv("HUBSPOT_CR_CONTACT_ID_PROPERTY"),
+      btRbtObjectTypeId: getRequiredEnv("HS_BT_RBT_OBJECT_TYPE_ID"),
+      btRbtPipelineId: getRequiredEnv("HS_BT_RBT_PIPELINE_ID"),
+      btRbtStageAllowlist: parseRequiredJsonArray("HS_BT_RBT_STAGE_ALLOWLIST_JSON"),
+      bcbaObjectTypeId: getRequiredEnv("HS_BCBA_OBJECT_TYPE_ID"),
+      bcbaPipelineId: getRequiredEnv("HS_BCBA_PIPELINE_ID"),
+      bcbaStageAllowlist: parseRequiredJsonArray("HS_BCBA_STAGE_ALLOWLIST_JSON"),
+      hubspotPortalId: getOptionalEnv("HUBSPOT_PORTAL_ID", ""),
+      employeeIdProperty: getOptionalEnv("HUBSPOT_EMPLOYEE_ID_PROPERTY", "employee_id")
     },
     limits: {
       maxDealsPerRun: Number(getRequiredEnv("MAX_DEALS_PER_RUN")),
@@ -241,6 +273,11 @@ export function getConfig() {
       connectionString: getRequiredEnv("SERVICE_BUS_CONNECTION_STRING"),
       clientSyncQueueName: getRequiredEnv("CLIENT_SYNC_QUEUE_NAME"),
       employeeSyncQueueName: getRequiredEnv("EMPLOYEE_SYNC_QUEUE_NAME")
+    },
+    features: {
+      allowEmployeeCreate:
+        String(getOptionalEnv("ALLOW_EMPLOYEE_CREATE", "false")).toLowerCase() === "true",
+      putOnlyMode: String(getOptionalEnv("PUT_ONLY_MODE", "true")).toLowerCase() !== "false"
     }
   };
 }

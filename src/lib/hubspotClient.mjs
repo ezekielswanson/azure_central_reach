@@ -3,6 +3,17 @@ import { withRetry } from "./retry.mjs";
 
 let hubSpotHttpClient = null;
 const SEARCH_LIMIT = 50;
+const EMPLOYEE_SEARCH_PROPERTIES = [
+  "hs_object_id",
+  "employee_id",
+  "hs_lastmodifieddate",
+  "updated_by_integration",
+  "integration_last_write",
+  "last_sync_hash",
+  "last_sync_at",
+  "last_sync_status",
+  "last_sync_error"
+];
 
 function isLookbackFilterError(error) {
   const status = error?.response?.status;
@@ -48,9 +59,12 @@ function isLookbackFilterError(error) {
   );
 }
 
-function buildDealSearchPayload({
+function buildObjectSearchPayload({
+  pipelineProperty,
+  stageProperty,
   pipelineId,
   stageAllowlist,
+  properties,
   limit,
   after,
   sinceIso,
@@ -58,12 +72,12 @@ function buildDealSearchPayload({
 }) {
   const filters = [
     {
-      propertyName: "pipeline",
+      propertyName: pipelineProperty,
       operator: "EQ",
       value: pipelineId
     },
     {
-      propertyName: "dealstage",
+      propertyName: stageProperty,
       operator: "IN",
       values: stageAllowlist
     }
@@ -79,7 +93,7 @@ function buildDealSearchPayload({
 
   return {
     filterGroups: [{ filters }],
-    properties: ["hs_object_id", "hs_lastmodifieddate", "integration_last_write"],
+    properties,
     sorts: [
       {
         propertyName: "hs_lastmodifieddate",
@@ -91,15 +105,15 @@ function buildDealSearchPayload({
   };
 }
 
-async function runSearch(payload) {
+async function runSearch(objectPath, payload) {
   if (!hubSpotHttpClient) {
     throw new Error("HubSpot client is not initialized");
   }
 
   const response = await withRetry(
-    () => hubSpotHttpClient.post("/crm/v3/objects/deals/search", payload),
+    () => hubSpotHttpClient.post(objectPath, payload),
     {
-      maxAttempts: 2,
+      maxAttempts: 3,
       baseDelayMs: 250,
       maxDelayMs: 5000
     }
@@ -128,6 +142,35 @@ export async function searchIntakeCompleteDeals({
   pipelineId,
   stageAllowlist
 }) {
+  return searchCustomObjectRecords({
+    objectTypeId: "deals",
+    pipelineProperty: "pipeline",
+    stageProperty: "dealstage",
+    pipelineId,
+    stageAllowlist,
+    limit,
+    maxSearchRequestsPerRun,
+    lookbackMinutes,
+    properties: ["hs_object_id", "hs_lastmodifieddate", "integration_last_write"]
+  });
+}
+
+export async function searchCustomObjectRecords({
+  objectTypeId,
+  pipelineProperty = "hs_pipeline",
+  stageProperty = "hs_pipeline_stage",
+  pipelineId,
+  stageAllowlist,
+  limit,
+  maxSearchRequestsPerRun,
+  lookbackMinutes,
+  properties = EMPLOYEE_SEARCH_PROPERTIES
+}) {
+  const normalizedObjectTypeId = String(objectTypeId || "").trim();
+  if (!normalizedObjectTypeId) {
+    throw new Error("HubSpot objectTypeId is required for search");
+  }
+
   const cappedLimit = Math.max(Number(limit) || 0, 0);
   if (cappedLimit === 0) {
     return [];
@@ -148,9 +191,12 @@ export async function searchIntakeCompleteDeals({
   const deals = [];
 
   while (deals.length < cappedLimit && requests < maxSearchRequests) {
-    const payload = buildDealSearchPayload({
+    const payload = buildObjectSearchPayload({
+      pipelineProperty,
+      stageProperty,
       pipelineId,
       stageAllowlist,
+      properties,
       limit: perRequestLimit,
       after,
       sinceIso,
@@ -159,19 +205,25 @@ export async function searchIntakeCompleteDeals({
 
     let searchResult;
     try {
-      searchResult = await runSearch(payload);
+      searchResult = await runSearch(`/crm/v3/objects/${normalizedObjectTypeId}/search`, payload);
     } catch (error) {
       if (includeLookback && isLookbackFilterError(error)) {
         includeLookback = false;
-        const fallbackPayload = buildDealSearchPayload({
+        const fallbackPayload = buildObjectSearchPayload({
+          pipelineProperty,
+          stageProperty,
           pipelineId,
           stageAllowlist,
+          properties,
           limit: perRequestLimit,
           after,
           sinceIso,
           includeLookback
         });
-        searchResult = await runSearch(fallbackPayload);
+        searchResult = await runSearch(
+          `/crm/v3/objects/${normalizedObjectTypeId}/search`,
+          fallbackPayload
+        );
       } else {
         throw error;
       }
@@ -214,6 +266,38 @@ export async function getDealById(dealId, properties = []) {
   return response?.data || null;
 }
 
+export async function getObjectById(objectTypeId, objectId, properties = []) {
+  if (!hubSpotHttpClient) {
+    throw new Error("HubSpot client is not initialized");
+  }
+
+  const normalizedTypeId = String(objectTypeId || "").trim();
+  const id = String(objectId || "").trim();
+
+  if (!normalizedTypeId) {
+    throw new Error("HubSpot objectTypeId is required");
+  }
+  if (!id) {
+    throw new Error("HubSpot objectId is required");
+  }
+
+  const requestedProperties = Array.isArray(properties) ? properties : [];
+  const params = requestedProperties.length
+    ? { properties: requestedProperties.join(",") }
+    : undefined;
+
+  const response = await withRetry(
+    () => hubSpotHttpClient.get(`/crm/v3/objects/${normalizedTypeId}/${id}`, { params }),
+    {
+      maxAttempts: 3,
+      baseDelayMs: 400,
+      maxDelayMs: 5000
+    }
+  );
+
+  return response?.data || null;
+}
+
 export async function updateDealProperties(dealId, properties) {
   if (!hubSpotHttpClient) {
     throw new Error("HubSpot client is not initialized");
@@ -238,4 +322,96 @@ export async function updateDealProperties(dealId, properties) {
   );
 
   return response?.data || null;
+}
+
+export async function updateObjectProperties(objectTypeId, objectId, properties) {
+  if (!hubSpotHttpClient) {
+    throw new Error("HubSpot client is not initialized");
+  }
+
+  const normalizedTypeId = String(objectTypeId || "").trim();
+  const id = String(objectId || "").trim();
+
+  if (!normalizedTypeId) {
+    throw new Error("HubSpot objectTypeId is required");
+  }
+  if (!id) {
+    throw new Error("HubSpot objectId is required");
+  }
+  if (!properties || typeof properties !== "object") {
+    throw new Error("HubSpot properties payload must be an object");
+  }
+
+  const response = await withRetry(
+    () => hubSpotHttpClient.patch(`/crm/v3/objects/${normalizedTypeId}/${id}`, { properties }),
+    {
+      maxAttempts: 3,
+      baseDelayMs: 400,
+      maxDelayMs: 5000
+    }
+  );
+
+  return response?.data || null;
+}
+
+export async function searchEligibleBtRbtRecords({
+  objectTypeId,
+  pipelineId,
+  stageAllowlist,
+  limit,
+  maxSearchRequestsPerRun,
+  lookbackMinutes
+}) {
+  return searchCustomObjectRecords({
+    objectTypeId,
+    pipelineProperty: "hs_pipeline",
+    stageProperty: "hs_pipeline_stage",
+    pipelineId,
+    stageAllowlist,
+    limit,
+    maxSearchRequestsPerRun,
+    lookbackMinutes,
+    properties: EMPLOYEE_SEARCH_PROPERTIES
+  });
+}
+
+export async function searchEligibleBcbaRecords({
+  objectTypeId,
+  pipelineId,
+  stageAllowlist,
+  limit,
+  maxSearchRequestsPerRun,
+  lookbackMinutes
+}) {
+  return searchCustomObjectRecords({
+    objectTypeId,
+    pipelineProperty: "hs_pipeline",
+    stageProperty: "hs_pipeline_stage",
+    pipelineId,
+    stageAllowlist,
+    limit,
+    maxSearchRequestsPerRun,
+    lookbackMinutes,
+    properties: EMPLOYEE_SEARCH_PROPERTIES
+  });
+}
+
+export async function getBtRbtRecordById(recordId, objectTypeId, properties = []) {
+  return getObjectById(objectTypeId, recordId, properties);
+}
+
+export async function getBcbaRecordById(recordId, objectTypeId, properties = []) {
+  return getObjectById(objectTypeId, recordId, properties);
+}
+
+export async function writeEmployeeIdToObject({
+  objectTypeId,
+  recordId,
+  employeeIdProperty = "employee_id",
+  employeeId
+}) {
+  const safeProperty = String(employeeIdProperty || "employee_id").trim() || "employee_id";
+  return updateObjectProperties(objectTypeId, recordId, {
+    [safeProperty]: employeeId ? String(employeeId) : ""
+  });
 }

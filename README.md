@@ -100,3 +100,32 @@ After unit tests pass and local settings contain real non-placeholder integratio
 Expected production path:
 
 - `timer -> intakePoller -> Service Bus client-sync-queue -> processClientQueue -> runClientSyncWorkflow`
+
+## Employee Sync Testing Stages
+
+Keep `AzureWebJobs.processEmployeeQueue.Disabled=true` until employee sync implementation is complete and validated.
+
+After implementation, full production-level local testing can use:
+
+- `AzureWebJobs.intakePoller.Disabled=false`
+- `AzureWebJobs.processClientQueue.Disabled=false`
+- `AzureWebJobs.processEmployeeQueue.Disabled=false`
+
+Expected production path:
+
+- `timer -> intakePoller -> Service Bus employee-sync-queue -> processEmployeeQueue -> runEmployeeSyncWorkflow`
+
+Employee poller guidance:
+
+- Employee trigger/poller behavior should stay aligned with AWS main branch (`flows/combined_poller.mjs`).
+- Azure intake poller should enqueue only lightweight, non-PHI employee queue messages:
+  - `workflow`
+  - `source`
+  - `employeeType`
+  - `recordId`
+  - `hsLastModifiedDate`
+  - `enqueuedAt`
+
+Canonical AWS business logic reference:
+
+- [https://github.com/ezekielswanson/aws_code/tree/main](https://github.com/ezekielswanson/aws_code/tree/main)
