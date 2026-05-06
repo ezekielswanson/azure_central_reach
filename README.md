@@ -71,3 +71,14 @@ Do not enable scheduled intake polling until the deployed manual intake endpoint
 1. Intake poller / intake queue (phase 1)
 2. Client sync (phase 2)
 3. Employee sync (phase 3)
+
+## Client Queue Trigger
+
+- `processClientQueue` is the production Service Bus trigger path for client sync.
+- Keep `AzureWebJobs.processClientQueue.Disabled=true` until `runClientSyncWorkflow` is fully implemented.
+- Once client sync is built, full production-level local test should use:
+  - `AzureWebJobs.intakePoller.Disabled=false`
+  - `AzureWebJobs.processClientQueue.Disabled=false`
+  - `AzureWebJobs.processEmployeeQueue.Disabled=true`
+- `processClientQueue` should never silently consume messages without syncing.
+- Invalid queue messages should fail safely and rely on Service Bus retry/dead-letter behavior.
